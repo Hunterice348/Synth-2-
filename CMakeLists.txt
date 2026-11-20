@@ -25,7 +25,7 @@ juce_add_plugin(HUNTERICE_ABYSS
     PRODUCT_NAME              "HUNTERICE ABYSS"
 )
 
-# Исходники
+# Исходники (Убедитесь, что эти файлы физически существуют по этим путям в GitHub)
 target_sources(HUNTERICE_ABYSS
     PRIVATE
         Source/PluginProcessor.cpp
@@ -38,7 +38,7 @@ target_include_directories(HUNTERICE_ABYSS
         ${CMAKE_CURRENT_SOURCE_DIR}/Source
 )
 
-# Подключаем модули JUCE
+# Подключаем модули JUCE и флаги
 target_compile_definitions(HUNTERICE_ABYSS
     PUBLIC
         JUCE_WEB_BROWSER=0
