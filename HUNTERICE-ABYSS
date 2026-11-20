@@ -1,0 +1,14 @@
+HUNTERICE-ABYSS/
+├── CMakeLists.txt
+├── README.md
+├── Source/
+│   ├── PluginProcessor.h
+│   ├── PluginProcessor.cpp
+│   ├── PluginEditor.h
+│   ├── PluginEditor.cpp
+│   └── DSP/
+│       ├── Oscillator.h        // Осциллятор с антиалиасингом
+│       └── ADSREnvelope.h      // ADSR огибающая
+└── .github/
+    └── workflows/
+        └── build.yml           // GitHub Actions
