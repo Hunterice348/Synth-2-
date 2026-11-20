@@ -1,0 +1,251 @@
+name: Build HUNTERICE ABYSS VST3
+
+on:
+  # Ручной запуск из вкладки Actions
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Тип сборки'
+        required: true
+        default: 'Release'
+        type: choice
+        options:
+          - Release
+          - RelWithDebInfo
+
+  # Автоматический запуск при пуше в main
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'Source/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/**'
+
+  # Запуск при создании Pull Request
+  pull_request:
+    branches: [ main ]
+
+# Глобальные переменные
+env:
+  BUILD_TYPE: ${{ github.event.inputs.build_type || 'Release' }}
+  PLUGIN_NAME: HUNTERICE_ABYSS
+  VST3_EXTENSION: vst3
+
+jobs:
+  build-windows:
+    name: Build Windows x64 VST3
+    runs-on: windows-latest
+
+    steps:
+      # ============================================================
+      # 1. Клонирование репозитория
+      # ============================================================
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      # ============================================================
+      # 2. Настройка окружения MSVC
+      # ============================================================
+      - name: Setup MSVC Developer Command Prompt
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      # ============================================================
+      # 3. Установка CMake последней версии
+      # ============================================================
+      - name: Install latest CMake
+        uses: lukka/get-cmake@latest
+
+      # ============================================================
+      # 4. Кэширование JUCE (ускоряет повторные сборки)
+      # ============================================================
+      - name: Cache JUCE build
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/_deps/juce-*
+            build/CMakeFiles
+          key: juce-cache-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: |
+            juce-cache-${{ runner.os }}-
+
+      # ============================================================
+      # 5. Конфигурация CMake
+      # ============================================================
+      - name: Configure CMake
+        shell: cmd
+        run: |
+          cmake -B build ^
+                -G "Visual Studio 17 2022" ^
+                -A x64 ^
+                -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} ^
+                -DCMAKE_INSTALL_PREFIX=install
+
+      # ============================================================
+      # 6. Компиляция VST3
+      # ============================================================
+      - name: Build VST3 Plugin
+        shell: cmd
+        run: |
+          cmake --build build ^
+                --config ${{ env.BUILD_TYPE }} ^
+                --target HUNTERICE_ABYSS_VST3 ^
+                --parallel %NUMBER_OF_PROCESSORS%
+
+      # ============================================================
+      # 7. Поиск собранного VST3-файла
+      # ============================================================
+      - name: Locate VST3 artifact
+        id: locate_vst3
+        shell: pwsh
+        run: |
+          Write-Host "=== Поиск .vst3 файлов ==="
+          $vst3Files = Get-ChildItem -Path build -Recurse -Filter "*.vst3" -Directory
+          if ($vst3Files.Count -eq 0) {
+            Write-Host "ОШИБКА: VST3 не найден!"
+            Write-Host "Содержимое build:"
+            Get-ChildItem -Path build -Recurse | Select-Object FullName
+            exit 1
+          }
+          $vst3Path = $vst3Files[0].FullName
+          Write-Host "Найден VST3: $vst3Path"
+          "VST3_PATH=$vst3Path" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "VST3_NAME=$($vst3Files[0].Name)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      # ============================================================
+      # 8. Проверка структуры VST3
+      # ============================================================
+      - name: Verify VST3 structure
+        shell: pwsh
+        run: |
+          $vst3 = $env:VST3_PATH
+          Write-Host "Проверка: $vst3"
+          $dll = Get-ChildItem -Path $vst3 -Recurse -Filter "*.dll"
+          if ($dll.Count -eq 0) {
+            Write-Error "Внутри .vst3 отсутствует DLL!"
+            exit 1
+          }
+          Write-Host "DLL найден: $($dll.FullName)"
+          Write-Host "Размер: $([math]::Round($dll.Length / 1MB, 2)) MB"
+
+      # ============================================================
+      # 9. Генерация версии
+      # ============================================================
+      - name: Generate version tag
+        id: version
+        shell: pwsh
+        run: |
+          $date = Get-Date -Format "yyyyMMdd"
+          $time = Get-Date -Format "HHmm"
+          $shortSha = "${{ github.sha }}".Substring(0, 7)
+          $version = "v0.1.0-${date}-${time}-${shortSha}"
+          Write-Host "Version: $version"
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      # ============================================================
+      # 10. Упаковка в ZIP
+      # ============================================================
+      - name: Package VST3 to ZIP
+        shell: pwsh
+        run: |
+          $src = $env:VST3_PATH
+          $zipName = "${{ env.PLUGIN_NAME }}_${{ env.VERSION }}_Win64.zip"
+          Write-Host "Упаковка: $src -> $zipName"
+          Compress-Archive -Path $src -DestinationPath $zipName -Force
+          $zipSize = [math]::Round((Get-Item $zipName).Length / 1MB, 2)
+          Write-Host "Размер ZIP: $zipSize MB"
+          "ZIP_NAME=$zipName" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      # ============================================================
+      # 11. Создание контрольных сумм
+      # ============================================================
+      - name: Generate SHA256 checksum
+        shell: pwsh
+        run: |
+          $zip = $env:ZIP_NAME
+          $hash = Get-FileHash -Path $zip -Algorithm SHA256
+          "$($hash.Hash)  $zip" | Out-File -FilePath "${zip}.sha256" -Encoding utf8
+          Get-Content "${zip}.sha256"
+
+      # ============================================================
+      # 12. Создание README внутри артефакта
+      # ============================================================
+      - name: Create install instructions
+        shell: pwsh
+        run: |
+          $readme = @"
+          ============================================
+          HUNTERICE ABYSS — VST3 Synthesizer
+          Version: ${{ env.VERSION }}
+          ============================================
+
+          УСТАНОВКА:
+          1. Распакуйте архив
+          2. Скопируйте папку "HUNTERICE ABYSS.vst3" в:
+             C:\Program Files\Common Files\VST3\
+          3. Перезапустите DAW (FL Studio / Ableton / Reaper / Cubase)
+          4. Выполните сканирование плагинов
+          5. Плагин появится в списке инструментов (Instruments)
+
+          СИСТЕМНЫЕ ТРЕБОВАНИЯ:
+          - Windows 10 / 11 (64-bit)
+          - DAW с поддержкой VST3
+          - Процессор с поддержкой SSE2
+
+          СБОРКА:
+          - Компилятор: MSVC 2022
+          - Фреймворк: JUCE 7.0.12
+          - Архитектура: x64
+          - Конфигурация: ${{ env.BUILD_TYPE }}
+
+          SHA256: $(Get-Content "${env:ZIP_NAME}.sha256")
+
+          © 2026 HUNTERICE
+          ============================================
+          "@
+          $readme | Out-File -FilePath "INSTALL.txt" -Encoding utf8
+
+      # ============================================================
+      # 13. Финальная упаковка (ZIP + README + checksum)
+      # ============================================================
+      - name: Create final distribution package
+        shell: pwsh
+        run: |
+          $finalZip = "${{ env.PLUGIN_NAME }}_${{ env.VERSION }}_Win64.zip"
+          Compress-Archive -Path $finalZip, "INSTALL.txt", "${finalZip}.sha256" -DestinationPath "dist.zip" -Force
+          Move-Item -Path "dist.zip" -Destination $finalZip -Force
+
+      # ============================================================
+      # 14. Загрузка артефакта
+      # ============================================================
+      - name: Upload VST3 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PLUGIN_NAME }}_${{ env.VERSION }}
+          path: ${{ env.ZIP_NAME }}
+          retention-days: 30
+          if-no-files-found: error
+
+      # ============================================================
+      # 15. Итоговая сводка
+      # ============================================================
+      - name: Build summary
+        if: always()
+        shell: pwsh
+        run: |
+          Write-Host ""
+          Write-Host "============================================"
+          Write-Host " HUNTERICE ABYSS — BUILD SUMMARY"
+          Write-Host "============================================"
+          Write-Host "Version:     ${{ env.VERSION }}"
+          Write-Host "Build type:  ${{ env.BUILD_TYPE }}"
+          Write-Host "Platform:    Windows x64"
+          Write-Host "VST3 path:   ${{ env.VST3_PATH }}"
+          Write-Host "ZIP package: ${{ env.ZIP_NAME }}"
+          Write-Host "Status:      ${{ job.status }}"
+          Write-Host "============================================"
+          Write-Host ""
