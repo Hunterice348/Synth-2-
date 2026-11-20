@@ -74,13 +74,12 @@ jobs:
             juce-cache-${{ runner.os }}-
 
       # ============================================================
-      # 5. Конфигурация CMake
+      # 5. Конфигурация CMake (ИСПРАВЛЕНО: удалён жёсткий -G)
       # ============================================================
       - name: Configure CMake
         shell: cmd
         run: |
           cmake -B build ^
-                -G "Visual Studio 17 2022" ^
                 -A x64 ^
                 -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} ^
                 -DCMAKE_INSTALL_PREFIX=install
@@ -197,7 +196,7 @@ jobs:
           - Процессор с поддержкой SSE2
 
           СБОРКА:
-          - Компилятор: MSVC 2022
+          - Компилятор: MSVC (Auto-detected)
           - Фреймворк: JUCE 7.0.12
           - Архитектура: x64
           - Конфигурация: ${{ env.BUILD_TYPE }}
